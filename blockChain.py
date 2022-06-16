@@ -8,11 +8,12 @@ import requests
 from flask import Flask, jsonify, request
 import socket
 
+main_server="http://localhost:5000"
 class Blockchain:
     def __init__(self):
         self.current_transactions = []
         self.chain = []
-        self.nodes = set(requests.get("http://localhost:5000/nodes").json().get('nodes'))
+        self.nodes = set(requests.get(main_server+"/nodes").json().get('nodes'))
 
         # Create the genesis block
         self.new_block(previous_hash='1', proof=100)
@@ -200,7 +201,7 @@ app = Flask(__name__)
 
 # Generate a globally unique address for this node
 node_identifier = str(uuid4()).replace('-', '')
-main_server="http://192.168.1.18:5000"
+
 # Instantiate the Blockchain
 
 
