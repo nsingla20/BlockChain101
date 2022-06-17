@@ -28,14 +28,13 @@ def get_nodes():
 @app.route('/transaction',methods=['POST'])
 def transsac():
     values=request.get_json()
-    required = ['sender', 'recipient', 'amount']
+    required = ['mssg', 'sign']
     if not all(k in values for k in required):
         return 'Missing values', 400
     
     data={
-        'sender':values['sender'],
-        'recipient':values['recipient'],
-        'amount':values['amount'],
+        'mssg':values['mssg'],
+        'sign':values['sign'],
     }
     
     for node in nodes:

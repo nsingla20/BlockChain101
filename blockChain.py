@@ -1,4 +1,10 @@
+from crypt import methods
 import hashlib
+from urllib import response
+import nacl.utils
+from nacl.public import PrivateKey, SealedBox, PublicKey
+from nacl.signing import SigningKey, VerifyKey
+from nacl.encoding import HexEncoder
 import json
 from time import time
 from urllib.parse import urlparse
@@ -14,6 +20,10 @@ class Blockchain:
         self.current_transactions = []
         self.chain = []
         self.nodes = set(requests.get(main_server+"/nodes").json().get('nodes'))
+        self.signk = SigningKey.generate()
+        self.pvk=self.signk.to_curve25519_private_key()
+        
+        print("Public Key: "+self.pvk.public_key.encode(encoder=HexEncoder).decode('utf-8'))
 
         # Create the genesis block
         self.new_block(previous_hash='1', proof=100)
@@ -126,7 +136,7 @@ class Blockchain:
         self.chain.append(block)
         return block
 
-    def new_transaction(self, sender, recipient, amount):
+    def new_transaction(self, mssg, sign):
         """
         Creates a new transaction to go into the next mined Block
 
@@ -135,14 +145,53 @@ class Blockchain:
         :param amount: Amount
         :return: The index of the Block that will hold this transaction
         """
+        mssg=mssg.encode('utf-8')
+        sign=sign.encode('utf-8')
+        # mssg=HexEncoder.decode(mssg)
+        print('\nNew Transaction detected:')
+        uns_box=SealedBox(self.pvk)
+        try :
+            st=time()
+            mssgo=uns_box.decrypt(mssg,encoder=HexEncoder).decode('utf-8')
+            print("Time to decrypt: "+str(time()-st))
+            # print(mssgo)
+            l=mssgo.split()
+            
+            if len(l)!=3 or l[0]!=self.pvk.public_key.encode(encoder=HexEncoder).decode('utf-8'):
+                return -1
+            
+            st=time()
+            sp=VerifyKey(l[1].encode('utf-8'),encoder=HexEncoder)
+            
+            sp.verify(sign,encoder=HexEncoder)
+            print("Time to verify: "+str(time()-st))
+        except :
+            return -1
+        amt=int(l[2])
         self.current_transactions.append({
-            'sender': sender,
-            'recipient': recipient,
-            'amount': amount,
+            'mssg': mssg,
+            'sign': sign
         })
-        print(f"{sender} paid {recipient} : {amount}")
+        
+        print("Transaction Successfull")
         return self.last_block['index'] + 1
 
+    def pay(self,amnt,pk):
+        
+        mssgo=str(pk)+" "+str(self.signk.verify_key.encode(encoder=HexEncoder).decode('utf-8'))+" "+str(amnt)
+        s_box=SealedBox(PublicKey(pk.encode('utf-8'),encoder=HexEncoder))
+        
+        mssg=s_box.encrypt(mssgo.encode('utf-8'),encoder=HexEncoder)
+        
+        sign=self.signk.sign(mssgo.encode('utf-8'),encoder=HexEncoder)
+        
+        data={
+            'mssg':mssg.decode('utf-8'),
+            'sign':sign.decode('utf-8')
+        }
+        
+        return data
+    
     @property
     def last_block(self):
         return self.chain[-1]
@@ -194,13 +243,12 @@ class Blockchain:
         guess = f'{last_proof}{proof}{last_hash}'.encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
         return guess_hash[:4] == "0000"
+
 blockchain = Blockchain()
 
 # Instantiate the Node
 app = Flask(__name__)
 
-# Generate a globally unique address for this node
-node_identifier = str(uuid4()).replace('-', '')
 
 # Instantiate the Blockchain
 
@@ -239,13 +287,15 @@ def new_transaction():
     values = request.get_json()
 
     # Check that the required fields are in the POST'ed data
-    required = ['sender', 'recipient', 'amount']
+    required = ['mssg', 'sign']
     if not all(k in values for k in required):
         return 'Missing values', 400
 
     # Create a new Transaction
-    index = blockchain.new_transaction(values['sender'], values['recipient'], values['amount'])
-
+    st=time()
+    index = blockchain.new_transaction(values['mssg'], values['sign'])
+    end=time()
+    print("Time Taken: "+str(end-st))
     response = {'message': f'Transaction will be added to Block {index}'}
     return jsonify(response), 201
 
@@ -294,6 +344,14 @@ def consensus():
 
     return jsonify(response), 200
 
+@app.route("/pk",methods=['GET'])
+def get_pk():
+    pk=blockchain.pvk.public_key.encode(encoder=HexEncoder).decode('utf-8')
+    
+    resp={'pk':str(pk)}
+    
+    return jsonify(resp), 200
+
 @app.route("/pay",methods=['POST'])
 def payto():
     values=request.get_json()
@@ -302,12 +360,7 @@ def payto():
     if not all(k in values for k in required):
         return 'Missing values', 400
     
-    values['sender']=node_identifier
-    data={
-        'sender':values['sender'],
-        'recipient':values['recipient'],
-        'amount':values['amount'],
-    }
+    data=blockchain.pay(values['amount'],values['recipient'])
     
     requests.post(main_server+"/transaction",json=data)
 
@@ -321,6 +374,10 @@ def reg():
     return r.content,r.status_code
     
 
+import logging
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+
 if __name__ == '__main__':
     from argparse import ArgumentParser
     # app.debug=True
@@ -331,13 +388,12 @@ if __name__ == '__main__':
     hostname=socket.gethostname()   
     IPAddr=socket.gethostbyname(hostname)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    
+    app.config['DEBUG'] = False
     sock.bind(('localhost', 0))
     port = sock.getsockname()[1]
     sock.close()
     node_identifier=port
     # main_server="http://"+IPAddr+":5000"
-    print(main_server)
     requests.post(main_server+"/ping",json={'port':f"{port}"})
     app.run(host='0.0.0.0', port=port)
 
